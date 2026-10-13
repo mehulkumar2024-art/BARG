@@ -1,6 +1,7 @@
 import math
 import random
 import time
+import uuid
 from collections import deque
 from barg.model import Sample, Settings
 from barg.profiler import Profile, fairness
@@ -18,6 +19,8 @@ class Engine:
         self.tick = 0
         self.rng = random.Random(42)
         self.inject_until = 0
+        self.session = uuid.uuid4().hex[:12]
+        self.updated_at = 0.0
 
     def ingest(self, sample):
         started = time.perf_counter()
@@ -40,6 +43,7 @@ class Engine:
         row['memory_low'] = decision['after']['memory.low']
         row['processing_ms'] = (time.perf_counter()-started)*1000
         self.decisions.append(decision)
+        self.updated_at = time.time()
         if row['status'] != previous:
             self.alerts.append({'timestamp':sample.timestamp,'identity':sample.identity,'status':row['status'],
                                 'score':row['score'],'components':row['components'],'threshold':self.settings.threshold,
@@ -50,19 +54,28 @@ class Engine:
         self.tick += 1
         rows = []
         for i,name in enumerate(('matrix-worker','file-worker','memory-worker')):
-            anomaly = i==1 and self.tick < self.inject_until
+            anomaly = i==1 and self.tick <= self.inject_until
             cpu = 85 if anomaly else 25+i*12+5*math.sin(self.tick/5+i)
             burst = 22 if anomaly else 2+i*2+self.rng.random()
             calls = [257,1,87,257,1,1,87]*100 if anomaly else [0,1,202,35,0,202]*40
-            sample = Sample(identity=f'{4100+i}:demo-1',pid=4100+i,name=name,group=name,timestamp=time.time(),
+            sample = Sample(identity=f'{4100+i}:demo-{self.session}',pid=4100+i,name=name,group=name,timestamp=time.time(),
                 source='simulated',cpu=cpu,burst_ms=burst,switches=int(cpu*3),faults=220 if anomaly else 8+i*4,
                 memory_mb=80+i*48,pressure=15 if anomaly else i*3,io_bytes=2e6 if anomaly else 4096,
-                syscalls=calls,syscall_count=len(calls),label=anomaly)
+                syscalls=calls,syscall_count=len(calls),interval_s=self.settings.interval,label=anomaly)
             rows.append(self.ingest(sample))
         return rows
 
+    def restore(self):
+        result = self.controller.actuator.restore()
+        self.controller.pending.clear()
+        self.controller.last.clear()
+        for row in self.rows.values():
+            values = self.controller.actuator.read(row['group'])
+            row.update(cpu_weight=values['cpu.weight'], memory_low=values['memory.low'])
+        return result
+
     def snapshot(self):
         rows = list(self.rows.values())
-        return {'timestamp':time.time(),'source': rows[0]['source'] if rows else 'unavailable',
+        return {'timestamp':self.updated_at,'source': rows[0]['source'] if rows else 'unavailable',
                 'processes':rows,'alerts':list(self.alerts),'decisions':list(self.decisions)[-60:],
                 'fairness':fairness([r['cpu'] for r in rows]),'settings':self.settings.model_dump()}

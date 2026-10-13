@@ -1,10 +1,10 @@
 # Verification record — 13 October 2026
 
-Development environment: Windows 11, Python 3.12.14, Node 24.13.0. No usable Linux execution environment was available; WSL returned access denied.
+Development environment: Windows 11, Python 3.12.14, Node 24.13.0. An elevated WSL inventory found only Docker Desktop's distribution, with no dedicated Ubuntu installation. That system distribution was not used for kernel or resource-control tests.
 
 ## Passed
 
-- Python regression suite: **25 passed, 3 skipped**, no failing tests. Command: `.venv\Scripts\python.exe -m pytest -q --basetemp=data/test-tmp-5`.
+- Python regression suite: **39 passed, 3 skipped**, no failing tests. Command: `.venv\Scripts\python.exe -m pytest -q --basetemp=data/test-tmp-7`.
 - React/TypeScript production build (`npm run build`), including type checking.
 - Python bytecode compilation for application and tests.
 - Bash syntax validation of all scripts using the installed Git Bash.
@@ -34,6 +34,12 @@ Final review also separated kernel losses from sequence truncation in the dashbo
 ## UI refresh — white and teal
 
 The dashboard was restyled across all views with white surfaces, a teal accent palette, rounded cards, softer shadows, page-entry transitions, animated switches, button hover/press feedback, and visible keyboard focus. Chart series use teal shades and distinct dash patterns. Motion is disabled for the operating system's reduced-motion preference. TypeScript and the production build passed; browser checks confirmed the refreshed overview, settings switches, and analytics navigation.
+
+## Reliability pass
+
+Corrected producer freshness timestamps, malformed live/experiment file handling, SQLite read connection closure, immediate restoration state, exact 20-window demo injection, session-specific demo identities, page-aligned memory targets, measured syscall intervals, optional PSI handling, and steady-state agent CPU accounting. Adaptive Linux modes now require eBPF; memory control fails clearly when pressure telemetry is unavailable. The Linux matrix holds a sandbox lease across vanilla and adaptive trials and cleans up its own children and restores allocations after errors. These Linux orchestration changes have been inspected and compiled, but still require Ubuntu runtime verification.
+
+Browser checks after rebuilding covered all eight views, settings save, the complete synthetic anomaly/recovery sequence, a continuously refreshed process dialog, Escape/focus restoration, simulator completion and restore. Vite preview now proxies API/WebSocket connections on localhost:5173. Windows setup/start scripts have explicit dependency and build diagnostics; Ubuntu setup checks the frontend's actual Node >=20 requirement. Fresh installation on a clean Windows or Ubuntu machine remains unexecuted.
 
 ## Evidence interpretation
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Activity,
@@ -27,6 +27,7 @@ type Row = {
   memory_mb: number;
   faults: number;
   syscall_count: number;
+  interval_s: number;
   switches: number;
   score: number;
   status: string;
@@ -68,6 +69,7 @@ type Snapshot = {
   timestamp: number;
   stale: boolean;
   error: string | null;
+  collector_error?: string | null;
   processes: Row[];
   alerts: {
     timestamp: number;
@@ -230,6 +232,7 @@ function Panel({
   );
 }
 function App() {
+  const dialogRef = useRef<HTMLElement>(null);
   const [page, setPage] = useState("Overview"),
     [snapshot, setSnapshot] = useState<Snapshot | null>(null),
     [history, setHistory] = useState<Snapshot[]>([]),
@@ -260,12 +263,12 @@ function App() {
       socket = new WebSocket(
         `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`,
       );
-      socket.onopen = () => setConnected(true);
+      socket.onopen = () => { setConnected(true); setConfig(null); };
       socket.onmessage = (e) => {
         const s = JSON.parse(e.data) as Snapshot;
         setSnapshot(s);
         setHistory((h) => [...h.slice(-59), s]);
-        setConfig((c) => c ?? s.settings);
+        setConfig((c) => s.mode === "live" ? s.settings : c ?? s.settings);
       };
       socket.onclose = () => {
         setConnected(false);
@@ -281,20 +284,47 @@ function App() {
     };
   }, []);
   useEffect(() => {
-    if (selected)
-      api("/processes/" + encodeURIComponent(selected))
-        .then(setDetail)
-        .catch((e) => setError(e.message));
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    setDetail(null);
+    async function refresh() {
+      if (!selected) return;
+      try {
+        const result = await api("/processes/" + encodeURIComponent(selected));
+        if (active) { setDetail(result); timer = setTimeout(refresh, 1500); }
+      } catch (e) { if (active) setError(String(e)); }
+    }
+    refresh();
+    return () => { active = false; clearTimeout(timer); };
   }, [selected]);
+  const detailOpen = Boolean(selected && detail);
   useEffect(() => {
-    if (page === "Experiments")
+    if (!detailOpen) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const dialog = dialogRef.current;
+    dialog?.querySelector<HTMLButtonElement>("button")?.focus();
+    function keyboard(event: KeyboardEvent) {
+      if (event.key === "Escape") { setSelected(null); setDetail(null); }
+      if (event.key === "Tab") {
+        const controls = dialog?.querySelectorAll<HTMLElement>("button:not(:disabled), a[href], input:not(:disabled), [tabindex='0']");
+        if (!controls?.length) return;
+        const first = controls[0], last = controls[controls.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      }
+    }
+    document.addEventListener("keydown", keyboard);
+    return () => { document.removeEventListener("keydown", keyboard); previous?.focus(); };
+  }, [detailOpen]);
+  useEffect(() => {
+    if (page === "Experiments" && connected)
       api("/experiments")
         .then((x) => {
           setExperiments(x.linux);
           if (x.simulator[0]) setSim(x.simulator[0].results);
         })
         .catch((e) => setError(e.message));
-  }, [page]);
+  }, [page, connected]);
   async function action(fn: () => Promise<unknown>, message: string) {
     setBusy(true);
     setError("");
@@ -471,19 +501,28 @@ function App() {
                 : "Deterministic demo data · no kernel tracing or host resource changes"}
             </span>
             <span className="ml-auto">
-              {snapshot?.settings.monitoring_only
+              {!snapshot ? "Waiting for backend" : snapshot.settings.monitoring_only
                 ? "Monitoring only"
                 : "Adaptive control enabled"}
             </span>
           </div>
-          {(error || snapshot?.error) && (
+          {!connected && (
+            <div className="error" role="status">
+              Backend connection required. Start the Python server and open
+              {" "}<a href="http://127.0.0.1:8000/">the local dashboard</a>.
+              GitHub Pages can host the interface, but cannot run Python or the Linux agent.
+              {" "}<a href="https://github.com/mehulkumar2024-art/BARG/blob/main/docs/STEP_BY_STEP.md" target="_blank" rel="noreferrer">Step-by-step setup guide</a>.
+              {snapshot && " Displayed values are from the last received update."}
+            </div>
+          )}
+          {(error || snapshot?.error || snapshot?.collector_error) && (
             <div className="error" role="alert">
-              {error || snapshot?.error}
+              {error || snapshot?.error || snapshot?.collector_error}
             </div>
           )}
           {snapshot?.stale && (
             <div className="error">
-              Telemetry is stale. Check the Linux agent before interpreting
+              Telemetry is stale. Check the backend or Linux agent before interpreting
               these values.
             </div>
           )}
@@ -609,8 +648,7 @@ function App() {
                       <span>Syscalls / second</span>
                       <strong>
                         {fmt(
-                          sum("syscall_count") /
-                            (snapshot?.settings.interval ?? 1),
+                          rows.reduce((total, row) => total + row.syscall_count / (row.interval_s || 1), 0),
                           0,
                         )}
                       </strong>
@@ -766,7 +804,7 @@ function App() {
                   />
                   {!live && (
                     <button
-                      disabled={busy || rows.some((r) => r.training)}
+                      disabled={!connected || busy || rows.some((r) => r.training)}
                       className="button"
                       onClick={() =>
                         action(
@@ -943,7 +981,7 @@ function App() {
                     </label>
                     <button
                       className="button"
-                      disabled={busy}
+                      disabled={!connected || busy}
                       onClick={() =>
                         action(
                           async () =>
@@ -1016,7 +1054,7 @@ function App() {
                           <td>{i >= 3 ? "Adaptive" : "Default"}</td>
                           <td>
                             <span className="badge">
-                              {experiments.length
+                              {experiments.some((r) => r.mode === ["vanilla", "monitor", "cpu", "memory", "full"][i])
                                 ? "See JSON export"
                                 : "NOT MEASURED"}
                             </span>
@@ -1117,13 +1155,13 @@ function App() {
                     ))}
                   </div>
                   <div className="actions">
-                    <button className="button" disabled={live || busy}>
+                    <button className="button" disabled={!connected || live || busy}>
                       Save configuration
                     </button>
                     <button
                       type="button"
                       className="button secondary"
-                      disabled={live || busy}
+                      disabled={!connected || live || busy}
                       onClick={() =>
                         action(async () => {
                           await api("/restore", "POST");
@@ -1174,11 +1212,11 @@ function App() {
                           <td>{fmt(r.jain_cpu_fairness, 3)}</td>
                           <td>{r.resource_changes}</td>
                           <td>
-                            {r.detection.precision === null
+                            {r.detection?.precision == null
                               ? "—"
                               : fmt(r.detection.precision, 3)}{" "}
                             /{" "}
-                            {r.detection.recall === null
+                            {r.detection?.recall == null
                               ? "—"
                               : fmt(r.detection.recall, 3)}
                           </td>
@@ -1239,6 +1277,7 @@ function App() {
           }}
         >
           <section
+            ref={dialogRef}
             className="modal"
             onClick={(e) => e.stopPropagation()}
             role="dialog"

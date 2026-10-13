@@ -36,6 +36,7 @@ class Collector:
         self.identities = {}
         self.last = time.monotonic()
         self.events = 0
+        self.pressure_available = True
         try:
             from bcc import BPF
             caps = capabilities()
@@ -51,6 +52,7 @@ class Collector:
                 self.bpf.cleanup()
                 self.bpf = None
             if require_ebpf: raise RuntimeError(f'eBPF required but unavailable: {exc}') from exc
+        self.last = time.monotonic()  # Compilation time is not part of the first sampling window.
 
     def consume(self, ctx, data, size):
         event = self.bpf['events'].event(data)
@@ -69,13 +71,18 @@ class Collector:
 
     def members(self):
         result, tids = {}, {}
+        self.pressure_available = True
         for group in self.groups:
             for value in (self.root/group/'cgroup.procs').read_text().split():
                 pid = int(value)
                 try:
                     record = proc(pid)
                     record['group'] = group
-                    record['pressure'] = float((self.root/group/'memory.pressure').read_text().split('avg10=')[1].split()[0])
+                    try:
+                        record['pressure'] = float((self.root/group/'memory.pressure').read_text().split('avg10=')[1].split()[0])
+                    except (OSError, ValueError, IndexError):
+                        record['pressure'] = 0
+                        self.pressure_available = False
                     try:
                         io = dict(line.split(': ') for line in Path(f'/proc/{pid}/io').read_text().splitlines())
                         record['io'] = int(io['read_bytes'])+int(io['write_bytes'])
@@ -84,9 +91,13 @@ class Collector:
                     for tid in Path(f'/proc/{pid}/task').iterdir(): tids[int(tid.name)] = pid
                 except (OSError,ValueError,IndexError): continue
         if self.bpf:
+            if len(tids) > 4096:
+                raise RuntimeError('Managed workload exceeds the 4096-thread tracing capacity')
             allowed = self.bpf['allowed']
             for key in list(allowed.keys()):
-                if key.value not in tids: del allowed[key]
+                if key.value not in tids:
+                    try: del allowed[key]
+                    except KeyError: pass  # Exit tracepoint may already have removed it.
             for tid,pid in tids.items():
                 allowed[ct.c_uint(tid)] = ct.c_uint(pid)
         # Discard buffered records on PID reuse; no baseline is inherited.
@@ -116,9 +127,10 @@ class Collector:
                 try: stats[name] = {k:int(v) for k,v in (line.split() for line in (self.root/record['group']/name).read_text().splitlines())}
                 except (OSError,ValueError): stats[name] = None
             try: stats['memory.current'] = int((self.root/record['group']/'memory.current').read_text())
-            except OSError: stats['memory.current'] = None
+            except (OSError, ValueError): stats['memory.current'] = None
+            stats['pressure_available'] = self.pressure_available
             samples.append(Sample(identity=record['identity'],pid=pid,name=record['name'],group=record['group'],
-                timestamp=time.time(),source='linux-ebpf' if self.bpf else 'linux-proc',
+                timestamp=time.time(),interval_s=elapsed,source='linux-ebpf' if self.bpf else 'linux-proc',
                 cpu=max(0,(record['ticks']-previous['ticks'])/os.sysconf('SC_CLK_TCK')/elapsed*100),
                 burst_ms=sum(bursts)/len(bursts) if bursts else 0,switches=buf['switches'],
                 faults=max(0,record['faults']-previous['faults'])/elapsed,memory_mb=record['rss'],pressure=record['pressure'],

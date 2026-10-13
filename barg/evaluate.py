@@ -16,6 +16,7 @@ from barg.profiler import fairness
 
 
 def detection_metrics(rows, labels, started, completed):
+    rows = [r for r in rows if not r.get('training') and started <= r['timestamp'] <= completed]
     tp=fp=tn=fn=0
     detections=[]
     recoveries=[]
@@ -51,7 +52,9 @@ def export(results, output, title, xkey, ykey):
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     fig,ax=plt.subplots(figsize=(10,4.5))
-    ax.bar([str(r[xkey]) for r in results],[r[ykey] for r in results],color='#269db8')
+    positions = list(range(len(results)))
+    ax.bar(positions,[r[ykey] for r in results],color='#087f70')
+    ax.set_xticks(positions, [str(r[xkey]) + (f" #{r['repeat']+1}" if 'repeat' in r else '') for r in results])
     ax.set(title=title,ylabel=ykey)
     ax.tick_params(axis='x',labelrotation=25)
     fig.tight_layout()
@@ -62,11 +65,21 @@ def export(results, output, title, xkey, ykey):
 
 def linux_matrix(root, output, repeats=3, duration=40, require_ebpf=True):
     if platform.system()!='Linux' or os.geteuid()!=0: raise RuntimeError('Linux experiments require root in the designated Ubuntu VM')
+    from barg.locking import acquire
+    with acquire('/run/barg') as lease:
+        return _linux_matrix(root, output, repeats, duration, require_ebpf, lease)
+
+
+def _linux_matrix(root, output, repeats, duration, require_ebpf, lease):
     if not 1<=repeats<=10 or not 30<=duration<=120: raise ValueError('Use 1–10 repeats and 30–120 seconds')
     from barg.control import CgroupActuator
     from barg.collector import capabilities
     guard=CgroupActuator(root,'/run/barg/rollback.json')
-    for group in ('worker','competitor'): guard.read(group)
+    if guard.original: guard.restore()
+    for group in ('worker','competitor'):
+        guard.read(group)
+        if (guard.path(group)/'cgroup.procs').read_text().strip():
+            raise RuntimeError('Experiment sandbox must be empty before starting')
     import pwd
     uid=int(os.environ.get('SUDO_UID','65534'))
     gid=pwd.getpwuid(uid).pw_gid
@@ -89,6 +102,7 @@ def linux_matrix(root, output, repeats=3, duration=40, require_ebpf=True):
         run_dir.mkdir(exist_ok=False)
         agent=None
         competitor=None
+        child=None
         log=(run_dir/'agent.log').open('w')
         cpu=min(os.sched_getaffinity(0))
         def join(group):
@@ -104,9 +118,9 @@ def linux_matrix(root, output, repeats=3, duration=40, require_ebpf=True):
         usage_before={g:usage(g) for g in ('worker','competitor')}
         try:
             if mode!='vanilla':
-                command=[sys.executable,'-m','barg.agent','--root',root,'--groups','worker','competitor','--output',str(run_dir),'--mode',mode]
+                command=[sys.executable,'-m','barg.agent','--root',root,'--groups','worker','competitor','--output',str(run_dir),'--mode',mode,'--lock-fd',str(lease.fileno())]
                 if require_ebpf: command.append('--require-ebpf')
-                agent=subprocess.Popen(command,stdout=log,stderr=log)
+                agent=subprocess.Popen(command,stdout=log,stderr=log,pass_fds=(lease.fileno(),))
                 deadline=time.monotonic()+20
                 while not (run_dir/'live.json').exists():
                     if agent.poll() is not None: raise RuntimeError(f'Agent failed; inspect {run_dir}/agent.log')
@@ -125,19 +139,30 @@ def linux_matrix(root, output, repeats=3, duration=40, require_ebpf=True):
             if agent and agent.poll() is not None: raise RuntimeError('Agent exited during workload; run invalid')
             time.sleep(1.2)
         finally:
-            if competitor:
-                try: competitor.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    competitor.terminate()
-                    competitor.wait(timeout=5)
-            if agent and agent.poll() is None:
-                agent.send_signal(signal.SIGTERM)
-                try: agent.wait(timeout=15)
-                except subprocess.TimeoutExpired:
-                    agent.kill()
-                    agent.wait()
-                    CgroupActuator(root,'/run/barg/rollback.json').restore()
-            log.close()
+            try:
+                for process in (child, competitor):
+                    if process and process.poll() is None:
+                        process.terminate()
+                        try: process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                            process.wait()
+            finally:
+                try:
+                    if agent and agent.poll() is None:
+                        agent.send_signal(signal.SIGTERM)
+                        try: agent.wait(timeout=15)
+                        except subprocess.TimeoutExpired:
+                            agent.kill()
+                            agent.wait()
+                    if agent:
+                        CgroupActuator(root,'/run/barg/rollback.json').restore()
+                finally:
+                    log.close()
+        if agent and agent.returncode != 0:
+            raise RuntimeError(f'Agent did not shut down cleanly; run invalid. Inspect {run_dir}/agent.log')
+        if competitor and competitor.returncode != 0:
+            raise RuntimeError(f'Competitor failed; run invalid. Inspect {run_dir}/agent.log')
         cpu_usage={g:usage(g)-usage_before[g] for g in ('worker','competitor')}
         telemetry=[]
         decisions=[]

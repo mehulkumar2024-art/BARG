@@ -3,6 +3,7 @@ import csv
 import io
 import json
 import os
+import sqlite3
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -12,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field, ConfigDict
 from barg.engine import Engine
-from barg.model import Settings
+from barg.model import Settings, Sample
 from barg.store import Store, read_records
 from barg.simulator import simulate, trace
 
@@ -22,6 +23,28 @@ class SimulationRequest(BaseModel):
     frames: int = Field(8, ge=1, le=128)
     length: int = Field(5000, ge=100, le=100000)
     seed: int = Field(42, ge=0, le=2**32-1)
+
+
+class LiveRow(Sample):
+    model_config = ConfigDict(extra='allow', allow_inf_nan=False)
+    score: float = Field(ge=0, le=1)
+    status: str
+    training: bool
+    prediction: float | None
+    ewma: float
+    cpu_weight: int
+    distribution: dict[str, float]
+
+
+class LiveSnapshot(BaseModel):
+    model_config = ConfigDict(extra='allow', allow_inf_nan=False)
+    timestamp: float = Field(ge=0)
+    source: str
+    processes: list[LiveRow]
+    alerts: list[dict]
+    decisions: list[dict]
+    fairness: float = Field(ge=0, le=1)
+    settings: Settings
 
 
 def create_app(data_dir='data', mode='demo'):
@@ -49,9 +72,9 @@ def create_app(data_dir='data', mode='demo'):
                         state['snapshot'] = engine.snapshot()
                     else:
                         # Read-only bridge. The root agent never executes browser requests.
-                        state['snapshot'] = json.loads((directory/'live.json').read_text())
+                        state['snapshot'] = LiveSnapshot.model_validate_json((directory/'live.json').read_text()).model_dump()
                     state['error'] = None
-                except (OSError, ValueError) as exc:
+                except (OSError, ValueError, sqlite3.Error) as exc:
                     state['error'] = str(exc)
                 await asyncio.sleep(engine.settings.interval)
         task = asyncio.create_task(update())
@@ -80,7 +103,7 @@ def create_app(data_dir='data', mode='demo'):
         result['mode'] = mode
         result['collector'] = 'SIMULATED' if mode=='demo' else result.get('collector','unavailable')
         result['error'] = state['error']
-        result['stale'] = time.time()-result['timestamp'] > 5 if mode=='live' else False
+        result['stale'] = time.time()-result['timestamp'] > max(5, result['settings']['interval']*3)
         result['live_controls_readonly'] = mode=='live'
         return result
 
@@ -107,7 +130,9 @@ def create_app(data_dir='data', mode='demo'):
         demo_only()
         if identity not in engine.profiles: raise HTTPException(404,'Process not found')
         from barg.profiler import Profile
+        engine.restore()
         engine.profiles[identity] = Profile(engine.settings)
+        engine.rows[identity].update(training=True, status='TRAINING')
         return {'training':True}
 
     @app.get('/api/settings')
@@ -117,7 +142,7 @@ def create_app(data_dir='data', mode='demo'):
     async def settings(value: Settings):
         demo_only()
         if value.monitoring_only or (engine.settings.cpu_enabled and not value.cpu_enabled) or (engine.settings.memory_enabled and not value.memory_enabled):
-            engine.controller.actuator.restore()
+            engine.restore()
         engine.settings = value
         return value
 
@@ -125,7 +150,7 @@ def create_app(data_dir='data', mode='demo'):
     async def restore():
         demo_only()
         engine.settings.monitoring_only = True
-        return engine.controller.actuator.restore()
+        return engine.restore()
 
     @app.post('/api/demo/anomaly')
     async def anomaly():
@@ -148,16 +173,24 @@ def create_app(data_dir='data', mode='demo'):
 
     @app.get('/api/experiments')
     async def experiments():
-        path=directory/'experiments.json'
-        return {'simulator':app.state.store.read('simulator'), 'linux':json.loads(path.read_text()) if path.exists() else []}
+        return {'simulator':app.state.store.read('simulator'), 'linux':experiment_records()}
+
+    def experiment_records():
+        path = directory/'experiments.json'
+        try:
+            records = json.loads(path.read_text()) if path.exists() else []
+            if not isinstance(records, list) or not all(isinstance(r, dict) for r in records):
+                raise ValueError('Expected a list of experiment records')
+            return records
+        except (OSError, ValueError) as exc:
+            raise HTTPException(503, f'Experiment results unavailable: {exc}') from exc
 
     @app.get('/api/export/{kind}')
     async def export(kind: str, format: str='json'):
         if kind not in ('telemetry','decision','anomaly','simulator','experiment'): raise HTTPException(404,'Unknown dataset')
         records = read_records(directory/'agent.sqlite3',kind,10000) if mode=='live' and kind in ('telemetry','decision','anomaly') else app.state.store.read(kind,10000)
         if kind=='experiment':
-            path=directory/'experiments.json'
-            records=json.loads(path.read_text()) if path.exists() else []
+            records=experiment_records()
         if format == 'json': return records
         if format != 'csv': raise HTTPException(422,'Use json or csv')
         buf = io.StringIO()
@@ -181,6 +214,10 @@ def create_app(data_dir='data', mode='demo'):
 
     dist = Path(__file__).resolve().parent.parent/'frontend'/'dist'
     if dist.exists(): app.mount('/',StaticFiles(directory=dist,html=True),name='dashboard')
+    else:
+        @app.get('/')
+        async def unbuilt_dashboard():
+            return Response('Dashboard has not been built. Run scripts/setup.ps1 on Windows or scripts/setup.sh on Ubuntu, then restart the backend. API documentation: /docs', status_code=503, media_type='text/plain')
     return app
 
 

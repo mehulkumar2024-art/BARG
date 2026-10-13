@@ -4,6 +4,8 @@
 
 Develop the dashboard, algorithms, simulator, and tests on Windows. Validate real tracing and resource control in an isolated Ubuntu 24.04 VM. This implementation does not replace the Linux scheduler or page-replacement algorithm.
 
+**Start here:** [beginner step-by-step guide](docs/STEP_BY_STEP.md) explains the project, browser demo, every dashboard view, Ubuntu implementation, experiments and troubleshooting.
+
 ## What runs
 
 - React + TypeScript + Tailwind dashboard with eight views, live WebSockets, process details, settings, anomaly injection, restoration, and simulator exports.
@@ -56,6 +58,8 @@ If Windows sandboxing prevents pytest temporary files or SQLite threads from wor
 ## Ubuntu installation
 
 Copy the source directory to the VM, excluding Windows `.venv` and `frontend/node_modules`. Take a VM snapshot. Allow roughly 2 vCPUs and 4 GiB RAM; keep experiments within the built-in bounds.
+
+Install Node.js 22 or 24 with npm first. Setup rejects Node versions below 20; Ubuntu's default Node package may be too old for the dashboard dependencies.
 
 ```bash
 bash scripts/setup.sh

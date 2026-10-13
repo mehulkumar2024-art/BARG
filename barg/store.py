@@ -1,6 +1,7 @@
 import json
 import sqlite3
 from pathlib import Path
+from contextlib import closing
 
 
 class Store:
@@ -27,5 +28,5 @@ class Store:
 def read_records(path,kind,limit=500):
     """Read agent data without creating or mutating its database."""
     if not Path(path).exists(): return []
-    with sqlite3.connect(Path(path).resolve().as_uri()+'?mode=ro',uri=True) as db:
+    with closing(sqlite3.connect(Path(path).resolve().as_uri()+'?mode=ro',uri=True)) as db:
         return [json.loads(r[0]) for r in db.execute('SELECT payload FROM records WHERE kind=? ORDER BY id DESC LIMIT ?', (kind,limit))]

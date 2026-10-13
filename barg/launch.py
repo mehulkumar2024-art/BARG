@@ -1,7 +1,7 @@
 """Enroll a newly launched bounded workload and immediately drop root."""
 import argparse
 import os
-import pwd
+import platform
 import sys
 from pathlib import Path
 from barg.control import CgroupActuator
@@ -14,7 +14,9 @@ def main():
     p.add_argument('--group',choices=['worker','competitor'],default='worker')
     args=p.parse_args()
     if not .1<=args.duration<=120: p.error('Duration must be 0.1–120 seconds')
-    if os.geteuid()!=0: p.error('Run via sudo from an ordinary user in the Ubuntu VM')
+    if platform.system() != 'Linux' or os.geteuid()!=0:
+        p.error('This launcher requires Linux; use scripts/start.ps1 for the Windows demo')
+    import pwd
     uid=int(os.environ.get('SUDO_UID','65534'))
     if uid==0: p.error('Workloads must run as a non-root user')
     gid=pwd.getpwuid(uid).pw_gid

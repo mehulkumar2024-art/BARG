@@ -32,6 +32,7 @@ class Sample(BaseModel):
     io_bytes: float = Field(0, ge=0)
     syscalls: list[int] = Field(default_factory=list, max_length=8192)
     syscall_count: int = Field(0, ge=0)
+    interval_s: float = Field(1, gt=0)
     drops: int = Field(0, ge=0)
     event_count: int = Field(0, ge=0)
     sequence_truncated: int = Field(0, ge=0)

@@ -1,10 +1,12 @@
 """Bounded joint policy; adapters isolate privileged writes from the web server."""
 from pathlib import Path
 import json
+import os
 import time
 
 
 class SimulatedActuator:
+    page_size = 4096
     def __init__(self):
         self.values = {}
         self.original = {}
@@ -25,6 +27,7 @@ class SimulatedActuator:
 
 class CgroupActuator:
     def __init__(self, root, journal):
+        self.page_size = os.sysconf('SC_PAGE_SIZE') if hasattr(os, 'sysconf') else 4096
         self.root = Path(root).resolve()
         if self.root.parent != Path('/sys/fs/cgroup') or not self.root.name.startswith('barg-'):
             raise ValueError('Only a direct /sys/fs/cgroup/barg-* sandbox is authorized')
@@ -123,6 +126,9 @@ class Controller:
                 desired = 0 if suspicious else (min(64, row['memory_mb']*.25)*1024**2 if row['pressure'] > 5 else 0)
                 step = 8*1024**2
                 target['memory.low'] = int(before['memory.low']+max(-step, min(step, desired-before['memory.low'])))
+                # cgroupfs rounds to kernel pages; write aligned values for exact readback.
+                page_size = self.actuator.page_size
+                target['memory.low'] = target['memory.low'] // page_size * page_size
         changes = {k:v for k,v in target.items() if before[k] != v}
         result = self.actuator.apply(group, changes) if changes else before
         if changes:
