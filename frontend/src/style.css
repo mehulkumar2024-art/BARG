@@ -1441,3 +1441,5 @@ footer {
     transition: none !important;
   }
 }
+
+.system-content { animation: none; }

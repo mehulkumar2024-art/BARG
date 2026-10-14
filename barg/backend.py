@@ -7,6 +7,7 @@ import sqlite3
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
@@ -16,6 +17,23 @@ from barg.engine import Engine
 from barg.model import Settings, Sample
 from barg.store import Store, read_records
 from barg.simulator import simulate, trace
+
+
+def trusted_origin(origin, request_url):
+    if origin is None:
+        return True
+    if origin in ('http://127.0.0.1:5173', 'http://localhost:5173'):
+        return True
+    try:
+        source, target = urlsplit(origin), urlsplit(str(request_url))
+        scheme = {'ws': 'http', 'wss': 'https'}.get(target.scheme, target.scheme)
+        return (source.scheme == scheme and source.hostname in ('127.0.0.1', 'localhost')
+                and source.hostname == target.hostname
+                and (source.port or (443 if source.scheme == 'https' else 80)) == (target.port or (443 if scheme == 'https' else 80))
+                and not source.username and not source.password and not source.path
+                and not source.query and not source.fragment)
+    except ValueError:
+        return False
 
 
 class SimulationRequest(BaseModel):
@@ -47,17 +65,20 @@ class LiveSnapshot(BaseModel):
     settings: Settings
 
 
-def create_app(data_dir='data', mode='demo'):
-    if mode not in ('demo','live'):
-        raise ValueError('Mode must be demo or live')
+def create_app(data_dir='data', mode='system'):
+    if mode not in ('demo','live','system'):
+        raise ValueError('Mode must be system, demo or live')
     directory = Path(data_dir)
     engine = Engine()
     state = {'snapshot':engine.snapshot(), 'error':None}
 
     @asynccontextmanager
     async def lifespan(app):
-        store = Store(directory/'history.sqlite3')
+        store = Store(directory/('system.sqlite3' if mode=='system' else 'history.sqlite3'))
         app.state.store = store
+        if mode == 'system':
+            from barg.system_monitor import SystemMonitor
+            monitor = SystemMonitor()
         async def update():
             while True:
                 try:
@@ -70,6 +91,10 @@ def create_app(data_dir='data', mode='demo'):
                         start=new_alerts.index(previous_alert)+1 if previous_alert in new_alerts else 0
                         for alert in new_alerts[start:]: store.add('anomaly',alert['timestamp'],alert)
                         state['snapshot'] = engine.snapshot()
+                    elif mode == 'system':
+                        state['snapshot'] = await asyncio.to_thread(monitor.collect)
+                        state['snapshot']['settings'] = engine.settings.model_dump()
+                        store.add_batch('telemetry', state['snapshot']['processes'])
                     else:
                         # Read-only bridge. The root agent never executes browser requests.
                         state['snapshot'] = LiveSnapshot.model_validate_json((directory/'live.json').read_text()).model_dump()
@@ -94,7 +119,7 @@ def create_app(data_dir='data', mode='demo'):
     @app.middleware('http')
     async def local_mutations(request: Request, call_next):
         origin = request.headers.get('origin')
-        if request.method not in ('GET','HEAD','OPTIONS') and origin and origin not in ('http://127.0.0.1:8000','http://localhost:8000','http://127.0.0.1:5173','http://localhost:5173'):
+        if request.method not in ('GET','HEAD','OPTIONS') and not trusted_origin(origin, request.url):
             return Response('Untrusted origin',status_code=403)
         return await call_next(request)
 
@@ -103,8 +128,8 @@ def create_app(data_dir='data', mode='demo'):
         result['mode'] = mode
         result['collector'] = 'SIMULATED' if mode=='demo' else result.get('collector','unavailable')
         result['error'] = state['error']
-        result['stale'] = time.time()-result['timestamp'] > max(5, result['settings']['interval']*3)
-        result['live_controls_readonly'] = mode=='live'
+        result['stale'] = time.time()-result['timestamp'] > max(5, result['settings']['interval']*3, result.get('system',{}).get('collection_seconds',0)*3)
+        result['live_controls_readonly'] = mode!='demo'
         return result
 
     def demo_only():
@@ -123,7 +148,8 @@ def create_app(data_dir='data', mode='demo'):
             return {'current':engine.rows[identity],'history':list(engine.profiles[identity].history)}
         rows = [r for r in snapshot()['processes'] if r['identity']==identity]
         if not rows: raise HTTPException(404,'Process identity not found')
-        return {'current':rows[0],'history':list(reversed([r for r in read_records(directory/'agent.sqlite3','telemetry',1000) if r['identity']==identity][:120]))}
+        database = 'system.sqlite3' if mode=='system' else 'agent.sqlite3'
+        return {'current':rows[0],'history':list(reversed([r for r in read_records(directory/database,'telemetry',10000) if r['identity']==identity][:120]))}
 
     @app.post('/api/processes/{identity}/retrain')
     async def retrain(identity: str):
@@ -202,7 +228,7 @@ def create_app(data_dir='data', mode='demo'):
 
     @app.websocket('/ws')
     async def stream(websocket: WebSocket):
-        if websocket.headers.get('origin') not in (None,'http://127.0.0.1:8000','http://localhost:8000','http://127.0.0.1:5173','http://localhost:5173'):
+        if not trusted_origin(websocket.headers.get('origin'), websocket.url):
             await websocket.close(code=1008)
             return
         await websocket.accept()
@@ -221,4 +247,4 @@ def create_app(data_dir='data', mode='demo'):
     return app
 
 
-app = create_app(os.environ.get('BARG_DATA','data'),os.environ.get('BARG_MODE','demo'))
+app = create_app(os.environ.get('BARG_DATA','data'),os.environ.get('BARG_MODE','system'))

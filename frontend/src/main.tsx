@@ -17,6 +17,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import "./style.css";
+import SystemMonitor, {SystemSnapshot} from './SystemMonitor';
 
 type Row = {
   identity: string;
@@ -344,6 +345,7 @@ function App() {
         s.processes.reduce((a, r) => a + Number(r[key] ?? 0), 0),
       ),
     live = snapshot?.mode === "live";
+  if (snapshot?.mode === 'system') return <SystemMonitor snapshot={snapshot as unknown as SystemSnapshot} connected={connected}/>;
   const processTable = (
     <div className="table-wrap">
       <table>

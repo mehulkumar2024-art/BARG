@@ -21,6 +21,12 @@ class Store:
     def read(self, kind, limit=500):
         return [json.loads(row[0]) for row in self.db.execute('SELECT payload FROM records WHERE kind=? ORDER BY id DESC LIMIT ?', (kind,limit))]
 
+    def add_batch(self, kind, rows):
+        with self.db:
+            self.db.executemany('INSERT INTO records(kind,timestamp,payload) VALUES(?,?,?)',
+                                [(kind,row['timestamp'],json.dumps(row)) for row in rows])
+            self.db.execute('DELETE FROM records WHERE id < (SELECT MAX(id)-50000 FROM records)')
+
     def close(self):
         self.db.close()
 

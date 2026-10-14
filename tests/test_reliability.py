@@ -78,7 +78,7 @@ def test_live_bridge_accepts_complete_profile_rows(tmp_path):
 @pytest.mark.parametrize('payload', ['{broken', '{}', '[1]'])
 def test_corrupt_experiment_handoff_has_actionable_response(tmp_path, payload):
     (tmp_path/'experiments.json').write_text(payload)
-    with TestClient(create_app(tmp_path)) as client:
+    with TestClient(create_app(tmp_path, 'demo')) as client:
         for endpoint in ('/api/experiments', '/api/export/experiment'):
             response = client.get(endpoint)
             assert response.status_code == 503
@@ -99,7 +99,7 @@ def test_demo_storage_error_does_not_kill_update_task(tmp_path, monkeypatch):
     import sqlite3
     def failed_add(*args): raise sqlite3.OperationalError('disk unavailable')
     monkeypatch.setattr(Store, 'add', failed_add)
-    with TestClient(create_app(tmp_path)) as client:
+    with TestClient(create_app(tmp_path, 'demo')) as client:
         result = client.get('/api/status').json()
         assert result['error'] == 'disk unavailable'
         assert len(result['processes']) == 3

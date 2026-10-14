@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-export BARG_MODE=${BARG_MODE:-demo}
+export BARG_MODE=${BARG_MODE:-system}
 mkdir -p data
 if [[ -f data/backend.pid ]] && kill -0 "$(cat data/backend.pid)" 2>/dev/null; then
   echo 'A recorded backend is still running. Use scripts/stop.sh first.' >&2

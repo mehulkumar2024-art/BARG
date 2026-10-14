@@ -1,5 +1,14 @@
 # BARG — Behavior-Aware Resource Governance
 
+## Current default is real system monitoring
+
+Run `powershell -File scripts/start.ps1 -Port 8080` and open http://127.0.0.1:8080/.
+The default backend now reads actual local processes with psutil: process names, PIDs, CPU time deltas, RSS, thread counts and available I/O counters. Search and sort the live process table. Protected or exited processes are skipped. New processes display a dash for rates until the second reading.
+
+This mode is read-only. It does not fabricate CPU bursts, syscall sequences, anomaly scores or control decisions. Those BARG features require the separate Ubuntu agent. System readings are stored separately in `data/system.sqlite3`; exports do not mix in demo records. Install updated dependencies with `pip install -r requirements.txt` in the project virtualenv. Stop an older server and restart after updating.
+
+The historical demo instructions below describe the optional `BARG_MODE=demo` mode, not the current default. Use `BARG_MODE=live` for the existing Ubuntu agent bridge.
+
 **An eBPF-driven closed-loop research prototype for adaptive CPU shares, memory protection, and behavioral anomaly detection.**
 
 Develop the dashboard, algorithms, simulator, and tests on Windows. Validate real tracing and resource control in an isolated Ubuntu 24.04 VM. This implementation does not replace the Linux scheduler or page-replacement algorithm.

@@ -1,10 +1,25 @@
 from fastapi.testclient import TestClient
 from barg.backend import create_app
 from barg.model import Settings
+import pytest
+from starlette.websockets import WebSocketDisconnect
+
+
+@pytest.mark.parametrize('port', [8000, 8080, 9000])
+def test_custom_port_stream_and_controls(tmp_path, port):
+    origin = f'http://127.0.0.1:{port}'
+    with TestClient(create_app(tmp_path, 'demo'), base_url=origin) as client:
+        with client.websocket_connect(f'ws://127.0.0.1:{port}/ws', headers={'origin':origin}) as ws:
+            assert len(ws.receive_json()['processes']) == 3
+        assert client.post('/api/demo/anomaly', headers={'origin':origin}).status_code == 200
+        assert client.post('/api/restore', headers={'origin':'https://evil.invalid'}).status_code == 403
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect(f'ws://127.0.0.1:{port}/ws', headers={'origin':'https://evil.invalid'}):
+                pass
 
 
 def test_api_stream_settings_simulator_and_export(tmp_path):
-    app=create_app(tmp_path)
+    app=create_app(tmp_path, 'demo')
     with TestClient(app) as client:
         assert client.get('/api/status').status_code==200
         with client.websocket_connect('/ws') as ws:
@@ -38,6 +53,6 @@ def test_root_agent_experiments_are_read_without_database_writes(tmp_path):
     import json
     record={'mode':'monitor','source':'real Linux experiment','throughput_ops_s':12.5}
     (tmp_path/'experiments.json').write_text(json.dumps([record]))
-    with TestClient(create_app(tmp_path)) as client:
+    with TestClient(create_app(tmp_path, 'demo')) as client:
         assert client.get('/api/experiments').json()['linux']==[record]
         assert client.get('/api/export/experiment').json()==[record]
