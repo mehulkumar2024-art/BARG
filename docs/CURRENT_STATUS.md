@@ -25,6 +25,18 @@ Full Windows regression suite on 20 October: 48 passed, 3 skipped. One Starlette
 
 `python -m scripts.compare_windows` runs 18 randomized two-second userspace trials (CPU, memory and I/O; baseline and supervised; three repeats). Its output is results/windows-comparison/results.json. This measures short workload throughput under current host load. It does not establish Linux governance improvement, isolate machine-wide overhead or guarantee priority-relief activation. Raw measurements and guard reports stay local and are not published to the public repository.
 
+### Measured userspace smoke comparison (20 October)
+
+18 trials completed. Median throughput in operations/second:
+
+| Workload | Baseline | Supervised |
+|---|---:|---:|
+| CPU | 207,503 | 215,263 |
+| Memory | 1,866,403 | 1,934,693 |
+| File I/O | 149.64 | 149.85 |
+
+No priority interventions occurred. The two-second trials are shorter than the three-reading response confirmation window and are only a launch/throughput smoke comparison. Differences can reflect uncontrolled host load and run variance; they are not evidence that BARG improves performance. Longer controlled contention experiments remain required.
+
 ## Ubuntu acceptance remains pending
 
 The development machine has only the Docker Desktop WSL distribution; no Ubuntu test host is available. Do not use Docker Desktop's internal distribution for cgroup experiments. Use an isolated Ubuntu 24.04 VM with a snapshot and matching kernel headers. Follow STEP_BY_STEP.md for setup, then:
