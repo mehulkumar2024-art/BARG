@@ -28,11 +28,13 @@ def test_real_tracepoint_attachment_and_reception():
     collector=Collector(actuator.root,['worker'],require_ebpf=True)
     child=None
     try:
-        child=subprocess.Popen([sys.executable,'-m','barg.launch','--kind','cpu','--duration','5'],stdout=subprocess.DEVNULL)
+        child=subprocess.Popen([sys.executable,'-m','barg.launch','--kind','io','--duration','5'],stdout=subprocess.DEVNULL)
         samples=[]
         deadline=time.monotonic()+7
         while time.monotonic()<deadline and child.poll() is None:
             samples.extend(collector.collect(.5))
+        assert child.wait(timeout=5) == 0, 'Managed workload failed'
+        print({'events':collector.events,'samples':len(samples),'syscalls':sum(s.syscall_count for s in samples),'switches':sum(s.switches for s in samples)})
         assert collector.events>0,'Attachment without event reception is insufficient'
         assert any(s.source=='linux-ebpf' and s.syscall_count>0 for s in samples)
         assert any(s.switches>0 for s in samples)
