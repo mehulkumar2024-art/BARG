@@ -1,3 +1,5 @@
+> Update 20 October 2026: real Ubuntu kernel integration now passes (2 tests, zero skips). See [KERNEL_VERIFICATION.md](KERNEL_VERIFICATION.md). Earlier entries below are historical.
+
 # Verification record — 13 October 2026
 
 Development environment: Windows 11, Python 3.12.14, Node 24.13.0. An elevated WSL inventory found only Docker Desktop's distribution, with no dedicated Ubuntu installation. That system distribution was not used for kernel or resource-control tests.
