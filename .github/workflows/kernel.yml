@@ -1,0 +1,46 @@
+name: Ubuntu kernel acceptance
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/kernel.yml'
+      - 'ebpf/**'
+      - 'barg/collector.py'
+      - 'barg/control.py'
+      - 'tests/test_kernel_live.py'
+permissions:
+  contents: read
+jobs:
+  kernel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install BCC and matching kernel headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-venv python3-bpfcc bpfcc-tools clang llvm linux-headers-$(uname -r)
+          /usr/bin/python3 -m venv --system-site-packages .venv
+          .venv/bin/python -m pip install -r requirements.txt
+      - name: Prepare isolated cgroup sandbox and record capabilities
+        run: |
+          mkdir -p results/kernel
+          uname -a | tee results/kernel/uname.txt
+          sudo mount -t tracefs tracefs /sys/kernel/tracing || mountpoint -q /sys/kernel/tracing
+          sudo sh -c 'echo "+cpu +memory" > /sys/fs/cgroup/cgroup.subtree_control'
+          sudo bash scripts/prepare_cgroup.sh
+          sudo .venv/bin/python -c 'import json; from barg.collector import capabilities; print(json.dumps(capabilities(),indent=2))' | tee results/kernel/capabilities.json
+      - name: Require real tracepoint events and cgroup restoration
+        run: |
+          set -o pipefail
+          sudo env BARG_KERNEL_TESTS=1 SUDO_UID=$(id -u) .venv/bin/python -m pytest tests/test_kernel_live.py -v -ra --junitxml=results/kernel/junit.xml 2>&1 | tee results/kernel/pytest.log
+      - name: Restore and remove the sandbox
+        if: always()
+        run: sudo bash scripts/cleanup.sh
+      - name: Upload kernel evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ubuntu-kernel-evidence
+          path: results/kernel/
