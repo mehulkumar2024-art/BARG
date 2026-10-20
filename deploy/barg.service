@@ -1,0 +1,23 @@
+[Unit]
+Description=BARG read-only system monitor
+After=network.target
+
+[Service]
+Type=simple
+User=barg
+Group=barg
+WorkingDirectory=/opt/barg
+Environment=BARG_MODE=system
+Environment=BARG_DATA=/var/lib/barg
+ExecStart=/opt/barg/.venv/bin/python -m uvicorn barg.backend:app --host 127.0.0.1 --port 8080 --no-proxy-headers
+Restart=on-failure
+RestartSec=5
+StateDirectory=barg
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

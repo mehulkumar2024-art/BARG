@@ -79,6 +79,8 @@ def create_app(data_dir='data', mode='system'):
         if mode == 'system':
             from barg.system_monitor import SystemMonitor
             monitor = SystemMonitor()
+            from barg.incidents import IncidentDetector
+            detector = IncidentDetector()
         async def update():
             while True:
                 try:
@@ -94,6 +96,11 @@ def create_app(data_dir='data', mode='system'):
                     elif mode == 'system':
                         state['snapshot'] = await asyncio.to_thread(monitor.collect)
                         state['snapshot']['settings'] = engine.settings.model_dump()
+                        incidents = detector.update(state['snapshot'])
+                        for event in incidents.pop('new_events'):
+                            store.add('anomaly', event['timestamp'], event)
+                        state['snapshot']['security'] = incidents
+                        state['snapshot']['alerts'] = incidents['events']
                         store.add_batch('telemetry', state['snapshot']['processes'])
                     else:
                         # Read-only bridge. The root agent never executes browser requests.
@@ -126,6 +133,17 @@ def create_app(data_dir='data', mode='system'):
     def snapshot():
         result = engine.snapshot() if mode=='demo' else state['snapshot'].copy()
         result['mode'] = mode
+        if mode == 'system':
+            guards = []
+            for path in sorted(directory.glob('guard-*.json'), key=lambda p: p.stat().st_mtime, reverse=True)[:20]:
+                try:
+                    if path.stat().st_size > 100000: continue
+                    guard = json.loads(path.read_text(encoding='utf-8'))
+                    guard['stale'] = time.time()-float(guard['timestamp']) > 5
+                    guards.append(guard)
+                except (OSError, ValueError, KeyError, TypeError):
+                    continue
+            result['guards'] = guards
         result['collector'] = 'SIMULATED' if mode=='demo' else result.get('collector','unavailable')
         result['error'] = state['error']
         result['stale'] = time.time()-result['timestamp'] > max(5, result['settings']['interval']*3, result.get('system',{}).get('collection_seconds',0)*3)

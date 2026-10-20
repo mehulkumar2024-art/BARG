@@ -1,0 +1,22 @@
+# Example only: replace monitor.example.com and REPLACE_WITH_BCRYPT_HASH.
+# Caddy >=2.8. Hash interactively with `caddy hash-password`.
+monitor.example.com {
+    route {
+        basic_auth {
+            barg REPLACE_WITH_BCRYPT_HASH
+        }
+        @foreignOrigin {
+            header Origin *
+            not header Origin https://monitor.example.com
+        }
+        respond @foreignOrigin "Untrusted origin" 403
+        @mutation not method GET HEAD OPTIONS
+        respond @mutation "Remote dashboard is read-only" 403
+        header Cache-Control "no-store"
+        reverse_proxy 127.0.0.1:8080 {
+            header_up Host localhost:8080
+            header_up Origin http://localhost:8080
+            header_up -Authorization
+        }
+    }
+}

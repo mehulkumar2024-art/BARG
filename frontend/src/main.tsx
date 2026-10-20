@@ -345,6 +345,7 @@ function App() {
         s.processes.reduce((a, r) => a + Number(r[key] ?? 0), 0),
       ),
     live = snapshot?.mode === "live";
+  if (!snapshot) return <main className="content"><div className="eyebrow">BARG · RESOURCE GOVERNANCE</div><h1>Connect your system monitor</h1><section className="panel"><h2>{connected ? "Waiting for the first reading" : "Python backend not connected"}</h2><p>This website needs a running BARG backend to display real processes and resource incidents. A static deployment cannot read your computer or run Python.</p><p>For local monitoring, start BARG from the project directory:</p><pre style={{whiteSpace:"pre-wrap"}}>powershell -File scripts/start.ps1 -Port 8080</pre><a className="button" href="http://127.0.0.1:8080/">Open local dashboard</a><p>For remote monitoring, deploy an authenticated HTTPS gateway and Python backend on the machine being monitored. Do not expose the current loopback service directly to the internet.</p><a href="https://github.com/mehulkumar2024-art/BARG/blob/main/docs/CURRENT_STATUS.md">Setup and current implementation status</a></section></main>;
   if (snapshot?.mode === 'system') return <SystemMonitor snapshot={snapshot as unknown as SystemSnapshot} connected={connected}/>;
   const processTable = (
     <div className="table-wrap">
@@ -1333,3 +1334,4 @@ function App() {
   );
 }
 createRoot(document.getElementById("root")!).render(<App />);
+
