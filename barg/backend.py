@@ -215,6 +215,15 @@ def create_app(data_dir='data', mode='system'):
         app.state.store.add('simulator',time.time(),{'config':config.model_dump(),'results':results})
         return results
 
+    @app.get('/api/experiments/responsiveness')
+    async def responsiveness():
+        path = directory/'responsiveness.json'
+        if not path.exists(): return {'status':'not_started','trials':[], 'summary':[]}
+        try:
+            return json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, ValueError) as exc:
+            raise HTTPException(503, 'Experiment report temporarily unavailable') from exc
+
     @app.get('/api/experiments')
     async def experiments():
         return {'simulator':app.state.store.read('simulator'), 'linux':experiment_records()}

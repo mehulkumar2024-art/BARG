@@ -1,5 +1,9 @@
 # BARG — Behavior-Aware Resource Governance
 
+## Responsiveness experiment lab
+
+Compare baseline, monitoring-only and adaptive Windows scheduling using two owned workers on one logical CPU. The Experiments page shows measured latency, throughput, variability and interventions. See [lab guide](docs/RESPONSIVENESS_LAB.md) for the command, methodology and limits.
+
 ## Current default is real system monitoring
 
 **Current release status and instructions:** [CURRENT_STATUS.md](docs/CURRENT_STATUS.md). Includes live incident detection, Windows guarded workloads, deployment handoff and remaining Ubuntu acceptance checks. Older demo instructions and Word documents below are historical.

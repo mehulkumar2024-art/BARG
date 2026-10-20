@@ -1,3 +1,4 @@
+import ResponsivenessLab from "./ResponsivenessLab";
 import { useEffect, useRef, useState } from "react";
 import {
   Activity,
@@ -789,6 +790,7 @@ export default function SystemMonitor({
               </p>
             </section>
           )}
+          {page === "Experiments" && <ResponsivenessLab/>}
           {page === "Experiments" && (
             <section className="panel">
               <h2>Live observation recording</h2>
